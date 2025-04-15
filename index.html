@@ -1,0 +1,756 @@
+<!DOCTYPE html>
+<html lang="en" data-bs-theme="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Stock Analyser</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        .green { color: green; }
+        .red { color: red; }
+        .sparkline-chart { height: 40px; width: 100px; }
+        .list-group-item { 
+            border-radius: 0 !important; 
+            margin-bottom: -1px;
+        }
+        .list-group-item:first-child { 
+            border-top-left-radius: 0.375rem !important; 
+            border-top-right-radius: 0.375rem !important; 
+        }
+        .list-group-item:last-child { 
+            border-bottom-left-radius: 0.375rem !important; 
+            border-bottom-right-radius: 0.375rem !important; 
+            margin-bottom: 0; 
+        }
+        .category-header { 
+            background-color: #f8f9fa;
+            padding: 0.5rem 1rem;
+            border: 1px solid rgba(0,0,0,.125);
+            margin-bottom: -1px;
+            font-weight: bold;
+        }
+        .chart-container { height: 400px; margin-bottom: 20px; }
+        .date-range { background: #f8f9fa; padding: 15px; border-radius: 5px; margin-bottom: 20px; }
+        .loading-spinner {
+            display: inline-block;
+            width: 1rem;
+            height: 1rem;
+            vertical-align: text-bottom;
+            border: 0.2em solid currentColor;
+            border-right-color: transparent;
+            border-radius: 50%;
+            animation: spinner-border 0.75s linear infinite;
+        }
+        @keyframes spinner-border {
+            to { transform: rotate(360deg); }
+        }
+        body {
+            background: #f4f6f8;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            color: #333;
+        }
+
+        h1, h2, h3, h4, h5 {
+            font-weight: 600;
+        }
+
+        .card {
+            box-shadow: 0 2px 10px rgba(0,0,0,0.05);
+            border: none;
+            border-radius: 0.75rem;
+        }
+
+        .card-header {
+            font-size: 1.1rem;
+            font-weight: bold;
+        }
+
+        .btn {
+            border-radius: 0.5rem;
+        }
+
+        .alert {
+            border-radius: 0.5rem;
+        }
+
+        input.form-control, select.form-select {
+            border-radius: 0.5rem;
+        }
+
+        .chart-container {
+            background: white;
+            padding: 1rem;
+            border-radius: 0.75rem;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        }
+
+        .list-group-item:hover {
+            background-color: #f0f0f0;
+            cursor: pointer;
+            transition: all 0.2s ease-in-out;
+        }
+
+        .category-header {
+            background: #e9ecef;
+            border-left: 4px solid #0d6efd;
+            font-size: 1rem;
+        }
+
+    </style>
+</head>
+<body class="container py-5">
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <h1>Stock Price Analyser</h1>
+        <button class="btn btn-sm btn-outline-dark" onclick="toggleTheme()">Toggle Dark Mode</button>
+    </div>
+
+    {% if user %}
+        <div class="alert alert-info">Welcome, {{ user }}! <a href="/logout">Logout</a></div>
+    {% else %}
+        <form action="/login" method="post" class="mb-4">
+            <div class="row g-2">
+                <div class="col-auto">
+                    <input name="username" type="text" class="form-control" placeholder="Enter username" required>
+                </div>
+                <div class="col-auto">
+                    <button type="submit" class="btn btn-success">Login</button>
+                </div>
+            </div>
+        </form>
+    {% endif %}
+
+    <form id="stockForm" class="row g-3 mb-4">
+        <div class="col-auto">
+            <label for="stockSymbol" class="form-label">Enter Stock Symbol:</label>
+            <input type="text" id="stockSymbol" name="stockSymbol" class="form-control" required>
+        </div>
+        <div class="col-auto align-self-end">
+            <button type="submit" class="btn btn-primary">
+                <span id="predictSpinner" class="loading-spinner d-none"></span>
+                Analyse
+            </button>
+        </div>
+    </form>
+
+    <div id="result" class="mt-4"></div>
+
+    <div id="stockDetailsSection" class="mt-5">
+        <div class="date-range">
+            <h3>Historical Data</h3>
+            <div class="row g-3">
+                <div class="col-md-3">
+                    <label for="startDate" class="form-label">Start Date</label>
+                    <input type="date" id="startDate" class="form-control">
+                </div>
+                <div class="col-md-3">
+                    <label for="endDate" class="form-label">End Date</label>
+                    <input type="date" id="endDate" class="form-control">
+                </div>
+                <div class="col-md-3">
+                    <label for="interval" class="form-label">Interval</label>
+                    <select id="interval" class="form-select">
+                        <option value="1d">Daily</option>
+                        <option value="1wk">Weekly</option>
+                        <option value="1mo">Monthly</option>
+                    </select>
+                </div>
+                <div class="col-md-3 d-flex align-items-end">
+                    <button id="loadHistory" class="btn btn-primary w-100">
+                        <span id="historySpinner" class="loading-spinner d-none"></span>
+                        Load History
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <div class="row">
+            <div class="col-md-6">
+                <div id="candlestickChart" class="chart-container"></div>
+            </div>
+            <div class="col-md-6">
+                <div id="lineChart" class="chart-container"></div>
+            </div>
+        </div>
+
+        <div class="table-responsive mt-4">
+            <table class="table table-striped">
+                <thead class="table-dark">
+                    <tr>
+                        <th>Date</th>
+                        <th>Open</th>
+                        <th>High</th>
+                        <th>Low</th>
+                        <th>Close</th>
+                        <th>Volume</th>
+                        <th>Change</th>
+                    </tr>
+                </thead>
+                <tbody id="historyTableBody">
+                    <!-- Historical data will be loaded here -->
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+
+
+    <h2 class="mt-5">Market Summary: Live updates on major indices (e.g., S&P 500, NASDAQ).</h2>
+    
+    <div class="trending-section mt-4">
+        <div class="row">
+            <!-- Gainers Card -->
+            <div class="col-md-4">
+                <div class="card">
+                    <div class="card-header bg-success text-white">
+                        <h4 class="mb-0">Top Gainers</h4>
+                    </div>
+                    <div class="card-body">
+                        <ul class="list-group">
+                            {% for stock in market_summary.gainers %}
+                            <li class="list-group-item d-flex justify-content-between align-items-center">
+                                <strong>{{ stock.symbol }}</strong>
+                                <span class="badge bg-success rounded-pill">+{{ stock.change }}%</span>
+                            </li>
+                            {% endfor %}
+                        </ul>
+                    </div>
+                </div>
+            </div>
+    
+            <!-- Losers Card -->
+            <div class="col-md-4">
+                <div class="card">
+                    <div class="card-header bg-danger text-white">
+                        <h4 class="mb-0">Top Losers</h4>
+                    </div>
+                    <div class="card-body">
+                        <ul class="list-group">
+                            {% for stock in market_summary.losers %}
+                            <li class="list-group-item d-flex justify-content-between align-items-center">
+                                <strong>{{ stock.symbol }}</strong>
+                                <span class="badge bg-danger rounded-pill">{{ stock.change }}%</span>
+                            </li>
+                            {% endfor %}
+                        </ul>
+                    </div>
+                </div>
+            </div>
+    
+            <!-- Active Stocks Card -->
+            <div class="col-md-4">
+                <div class="card">
+                    <div class="card-header bg-primary text-white">
+                        <h4 class="mb-0">Most Active</h4>
+                    </div>
+                    <div class="card-body">
+                        <ul class="list-group">
+                            {% for stock in market_summary.active %}
+                            <li class="list-group-item d-flex justify-content-between align-items-center">
+                                <strong>{{ stock.symbol }}</strong>
+                                <span class="text-muted">{{ "{:,.0f}".format(stock.volume) }}</span>
+                            </li>
+                            {% endfor %}
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="d-flex justify-content-between align-items-center">
+        <h2>Trending Stocks</h2>
+        <div>
+            <button onclick="download('json')" class="btn btn-outline-secondary btn-sm">Download JSON</button>
+            <button onclick="download('csv')" class="btn btn-outline-secondary btn-sm">Download CSV</button>
+        </div>
+    </div>
+
+    <div class="list-group" id="trendingSection"></div>
+
+
+
+    <div class="row mb-4">
+        {% for index in index_summary %}
+        <div class="col-md-4">
+            <div class="card shadow-sm">
+                <div class="card-body d-flex justify-content-between align-items-center">
+                    <div>
+                        <h5 class="mb-0">{{ index.name }}</h5>
+                        <small class="text-muted">Value: {{ index.value }}</small>
+                    </div>
+                    <div class="text-end">
+                        <span class="fw-bold {{ 'text-success' if index.up else 'text-danger' }}">
+                            {{ '+' if index.up else '' }}{{ index.change }} ({{ index.percent }}%)
+                        </span>
+                    </div>
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+    
+
+
+
+    
+
+<!-- Replace the login form section with this -->
+{% if not user %}
+<div class="card mb-4">
+    <div class="card-header">
+        <h5 class="mb-0">Login</h5>
+    </div>
+    <div class="card-body">
+        <form action="/login" method="post" class="row g-3">
+            <div class="col-md-8">
+                <input name="username" type="text" class="form-control" placeholder="Enter username" required>
+            </div>
+            <div class="col-md-4">
+                <button type="submit" class="btn btn-primary w-100">Login</button>
+            </div>
+        </form>
+    </div>
+</div>
+{% else %}
+
+
+
+<!-- Portfolio Management Section -->
+<div class="mt-5">
+    <h2>Portfolio Management</h2>
+    
+    <!-- Watchlist -->
+    <div class="card mb-4">
+        <div class="card-header bg-info text-white">
+            <h4 class="mb-0">Watchlist</h4>
+        </div>
+        <div class="card-body">
+            <p class="mb-2">Track selected stocks you care about.</p>
+            <!-- Replace with dynamic content if needed -->
+            <ul class="list-group">
+                <li class="list-group-item">AAPL</li>
+                <li class="list-group-item">GOOGL</li>
+                <li class="list-group-item">TSLA</li>
+            </ul>
+        </div>
+    </div>
+
+    <!-- Investment Calculator -->
+    <div class="card">
+        <div class="card-header bg-secondary text-white">
+            <h4 class="mb-0">Investment Calculator</h4>
+        </div>
+        <div class="card-body">
+            <form id="calculatorForm">
+                <div class="row g-3">
+                    <div class="col-md-4">
+                        <label for="buyPrice" class="form-label">Buy Price</label>
+                        <input type="number" class="form-control" id="buyPrice" required>
+                    </div>
+                    <div class="col-md-4">
+                        <label for="sellPrice" class="form-label">Sell Price</label>
+                        <input type="number" class="form-control" id="sellPrice" required>
+                    </div>
+                    <div class="col-md-4">
+                        <label for="quantity" class="form-label">Quantity</label>
+                        <input type="number" class="form-control" id="quantity" required>
+                    </div>
+                </div>
+                <div class="mt-3">
+                    <button type="submit" class="btn btn-primary">Calculate</button>
+                    <div id="calcResult" class="mt-3"></div>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- News & Alerts Section -->
+<div class="mt-5">
+    <h2>News & Alerts</h2>
+
+    <!-- Live News Feed -->
+    <div class="card mb-4">
+        <div class="card-header bg-warning">
+            <h4 class="mb-0">Live News Feed</h4>
+        </div>
+        <div class="card-body">
+            <p>Stay up to date with the latest stock-related news articles.</p>
+            <ul class="list-group">
+                <li class="list-group-item">Apple stock jumps after new product announcement.</li>
+                <li class="list-group-item">Tech sector rebounds amid economic optimism.</li>
+                <li class="list-group-item">Tesla reports record Q1 deliveries.</li>
+            </ul>
+        </div>
+    </div>
+
+    <!-- Price Alerts -->
+    <div class="card">
+        <div class="card-header bg-danger text-white">
+            <h4 class="mb-0">Price Alerts</h4>
+        </div>
+        <div class="card-body">
+            <p>Set alerts to get notified when a stock hits a target price.</p>
+            <form id="alertForm">
+                <div class="row g-3">
+                    <div class="col-md-4">
+                        <label for="alertSymbol" class="form-label">Stock Symbol</label>
+                        <input type="text" class="form-control" id="alertSymbol" required>
+                    </div>
+                    <div class="col-md-4">
+                        <label for="targetPrice" class="form-label">Target Price</label>
+                        <input type="number" class="form-control" id="targetPrice" required>
+                    </div>
+                    <div class="col-md-4 d-flex align-items-end">
+                        <button type="submit" class="btn btn-danger w-100">Set Alert</button>
+                    </div>
+                </div>
+                <div id="alertResult" class="mt-3"></div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<div class="alert alert-info">
+    Welcome, {{ user }}! <a href="/logout" class="alert-link">Logout</a>
+</div>
+
+{% endif %}
+
+    <script>
+        // Theme Toggle
+        function toggleTheme() {
+            const html = document.documentElement;
+            const current = html.getAttribute('data-bs-theme');
+            html.setAttribute('data-bs-theme', current === 'dark' ? 'light' : 'dark');
+        }
+
+        // Set default dates
+        function setDefaultDates() {
+            const endDate = new Date();
+            const startDate = new Date();
+            startDate.setMonth(endDate.getMonth() - 3);
+            
+            document.getElementById('endDate').valueAsDate = endDate;
+            document.getElementById('startDate').valueAsDate = startDate;
+        }
+
+        // Prediction Function
+        document.getElementById('stockForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            const symbol = document.getElementById('stockSymbol').value.trim().toUpperCase();
+            const resultDiv = document.getElementById('result');
+            const spinner = document.getElementById('predictSpinner');
+            
+            resultDiv.innerHTML = '';
+            spinner.classList.remove('d-none');
+            
+            try {
+                const response = await fetch('/predict', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/x-www-form-urlencoded',
+                    },
+                    body: `stockSymbol=${encodeURIComponent(symbol)}`
+                });
+                
+                const data = await response.json();
+                
+                if (!response.ok) {
+                    throw new Error(data.error || 'Prediction failed');
+                }
+                
+                resultDiv.innerHTML = `
+                    <div class="alert alert-success">
+                        <strong>${data.symbol}</strong><br>
+                        Current Price: $${data.last_close.toFixed(2)}<br>
+                        Predicted Price: $${data.prediction.toFixed(2)}<br>
+                        <small>Updated: ${data.last_updated || new Date().toLocaleDateString()}</small>
+                    </div>`;
+                
+                // Load historical data for this symbol
+                setDefaultDates();
+                await loadHistoricalData(symbol);
+                
+            } catch (error) {
+                resultDiv.innerHTML = `
+                    <div class="alert alert-danger">
+                        Error: ${error.message || 'Failed to get prediction'}
+                    </div>`;
+                console.error('Prediction error:', error);
+            } finally {
+                spinner.classList.add('d-none');
+            }
+        });
+
+        // Historical Data Loader
+        document.getElementById('loadHistory').addEventListener('click', async function() {
+            const symbol = document.getElementById('stockSymbol').value.trim().toUpperCase();
+            if (!symbol) {
+                alert('Please enter a stock symbol first');
+                return;
+            }
+            await loadHistoricalData(symbol);
+        });
+
+            // Investment Calculator Logic
+        document.getElementById('calculatorForm').addEventListener('submit', function(e) {
+            e.preventDefault();
+            const buy = parseFloat(document.getElementById('buyPrice').value);
+            const sell = parseFloat(document.getElementById('sellPrice').value);
+            const qty = parseInt(document.getElementById('quantity').value);
+            const profit = (sell - buy) * qty;
+            document.getElementById('calcResult').innerHTML = `<div class="alert alert-${profit >= 0 ? 'success' : 'danger'}">${profit >= 0 ? 'Profit' : 'Loss'}: $${profit.toFixed(2)}</div>`;
+        });
+
+        // Price Alert Stub (no backend logic)
+        document.getElementById('alertForm').addEventListener('submit', function(e) {
+            e.preventDefault();
+            const symbol = document.getElementById('alertSymbol').value.toUpperCase();
+            const price = document.getElementById('targetPrice').value;
+            document.getElementById('alertResult').innerHTML = `<div class="alert alert-info">Alert set for ${symbol} at $${price}</div>`;
+        });
+
+        async function loadHistoricalData(symbol) {
+            const startDate = document.getElementById('startDate').value;
+            const endDate = document.getElementById('endDate').value;
+            const interval = document.getElementById('interval').value;
+            const spinner = document.getElementById('historySpinner');
+            const errorDiv = document.getElementById('result');
+            
+            spinner.classList.remove('d-none');
+            errorDiv.innerHTML = '';
+            
+            try {
+                const response = await fetch(`/api/historical?symbol=${symbol}&start=${startDate}&end=${endDate}&interval=${interval}`);
+                const data = await response.json();
+                
+                if (!response.ok) {
+                    throw new Error(data.error || 'Failed to load historical data');
+                }
+                
+                renderCharts(data.data);
+                renderTable(data.data);
+                
+            } catch (error) {
+                errorDiv.innerHTML = `
+                    <div class="alert alert-danger">
+                        Error loading history: ${error.message}
+                    </div>`;
+                console.error('History load error:', error);
+            } finally {
+                spinner.classList.add('d-none');
+            }
+        }
+
+        function renderCharts(stockData) {
+            const dates = stockData.map(d => d.date);
+            const closes = stockData.map(d => d.close);
+            const opens = stockData.map(d => d.open);
+            const highs = stockData.map(d => d.high);
+            const lows = stockData.map(d => d.low);
+
+            // Candlestick Chart
+            Plotly.newPlot('candlestickChart', [{
+                x: dates,
+                open: opens,
+                high: highs,
+                low: lows,
+                close: closes,
+                type: 'candlestick',
+                name: 'Price',
+                increasing: {line: {color: 'green'}},
+                decreasing: {line: {color: 'red'}}
+            }], {
+                title: 'Daily Price Movement',
+                xaxis: {title: 'Date'},
+                yaxis: {title: 'Price (USD)'}
+            });
+
+            // Line Chart
+            Plotly.newPlot('lineChart', [{
+                x: dates,
+                y: closes,
+                type: 'scatter',
+                mode: 'lines',
+                name: 'Closing Price',
+                line: {color: 'blue', width: 2}
+            }], {
+                title: 'Closing Price Trend',
+                xaxis: {title: 'Date'},
+                yaxis: {title: 'Price (USD)'}
+            });
+        }
+
+        function renderTable(stockData) {
+            const tableBody = document.getElementById('historyTableBody');
+            tableBody.innerHTML = '';
+            
+            stockData.forEach((day, i) => {
+                const change = i > 0 ? 
+                    ((day.close - stockData[i-1].close) / stockData[i-1].close * 100).toFixed(2) + '%' : 
+                    'N/A';
+                const changeClass = change.includes('-') ? 'text-danger' : 'text-success';
+                
+                const row = document.createElement('tr');
+                row.innerHTML = `
+                    <td>${day.date}</td>
+                    <td>${day.open.toFixed(2)}</td>
+                    <td>${day.high.toFixed(2)}</td>
+                    <td>${day.low.toFixed(2)}</td>
+                    <td>${day.close.toFixed(2)}</td>
+                    <td>${day.volume.toLocaleString()}</td>
+                    <td class="${changeClass}">${change}</td>
+                `;
+                tableBody.appendChild(row);
+            });
+        }
+
+        // Load Trending Stocks
+        function loadTrendingStocks() {
+            fetch('/api/trending')
+                .then(response => {
+                    if (!response.ok) {
+                        throw new Error('Network response was not ok');
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    const container = document.getElementById('trendingSection');
+                    container.innerHTML = '';
+
+                    for (const category in data) {
+                        if (category === 'error') continue;
+                        
+                        const stocks = data[category];
+                        
+                        // Add category header
+                        const header = document.createElement('div');
+                        header.className = 'category-header';
+                        header.innerHTML = category;
+                        container.appendChild(header);
+                        
+                        // Add stocks
+                        stocks.forEach((stock, i) => {
+                            const color = stock['% Change'].includes('+') ? 'green' : 'red';
+                            const chartId = `spark-${category.replace(/\s+/g, '')}-${i}`;
+                            
+                            const item = document.createElement('a');
+                            item.href = `/stock/${stock.Symbol}`;
+                            item.className = 'list-group-item list-group-item-action d-flex justify-content-between align-items-center';
+                            item.innerHTML = `
+                                <div>
+                                    <strong>${stock.Symbol}</strong>
+                                    <span class="text-muted ms-2">${stock.Name}</span>
+                                </div>
+                                <div class="d-flex align-items-center">
+                                    <span class="${color} me-3">${stock['% Change']}</span>
+                                    <canvas id="${chartId}" class="sparkline-chart"></canvas>
+                                </div>
+                            `;
+                            container.appendChild(item);
+                            
+                            setTimeout(() => renderSparkline(chartId, stock.sparkline), 100);
+                        });
+                    }
+                })
+                .catch(error => {
+                    console.error('Error loading trending stocks:', error);
+                    document.getElementById('trendingSection').innerHTML = `
+                        <div class="alert alert-danger">
+                            Failed to load trending stocks. Please try again later.
+                        </div>`;
+                });
+        }
+
+        function renderSparkline(id, data) {
+            new Chart(document.getElementById(id), {
+                type: 'line',
+                data: {
+                    labels: data.map((_, i) => i),
+                    datasets: [{
+                        data: data,
+                        borderColor: '#0d6efd',
+                        backgroundColor: 'rgba(13, 110, 253, 0.1)',
+                        fill: true,
+                        tension: 0.3,
+                        borderWidth: 1,
+                        pointRadius: 0
+                    }]
+                },
+                options: {
+                    plugins: { legend: { display: false } },
+                    scales: { x: { display: false }, y: { display: false } }
+                }
+            });
+        }
+
+        function download(type) {
+    fetch('/api/trending')
+        .then(response => {
+            if (!response.ok) throw new Error('Network response was not ok');
+            return response.json();
+        })
+        .then(data => {
+            if (type === 'json') {
+                const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = 'trending_stocks.json';
+                a.click();
+            } else {
+                let csv = 'Category,Symbol,Change (%),Volume\n';
+                for (const cat in data) {
+                    if (!Array.isArray(data[cat])) continue;
+                    data[cat].forEach(stock => {
+                        const symbol = stock.Symbol || stock.symbol || '';
+                        const change = stock['% Change'] || stock.change || '';
+                        const volume = stock.Volume || stock.volume || '';
+                        csv += `${cat},${symbol},${change},${volume}\n`;
+                    });
+                }
+                const blob = new Blob([csv], { type: 'text/csv' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = 'trending_stocks.csv';
+                a.click();
+            }
+        })
+        .catch(error => {
+            console.error('Download failed:', error);
+            alert('Failed to download data. Please try again.');
+        });
+}
+
+
+
+        // Initialize
+            document.addEventListener('DOMContentLoaded', () => {
+                setDefaultDates();
+                loadTrendingStocks();
+                setInterval(loadTrendingStocks, 60000);
+                $(document).ready(function(){
+        // Fetch and display trending data
+        ['gainers', 'losers', 'active'].forEach(type => {
+            fetch(`/api/trending/${type}`)
+                .then(res => res.json())
+                .then(data => {
+                    let html = '<ul class="list-group">';
+                    data.forEach(stock => {
+                        html += `<li class="list-group-item">
+                            ${stock.symbol}: ${stock.price} (${stock.change}%)
+                        </li>`;
+                    });
+                    html += '</ul>';
+                    document.getElementById(`${type}-container`).innerHTML = html;
+                });
+        });
+    });
+            });
+    </script>
+</body>
+</html>
